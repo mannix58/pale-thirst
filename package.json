@@ -1,0 +1,25 @@
+{
+  "name": "pale-thirst",
+  "version": "0.1.0",
+  "description": "A web-based, real-time action roguelike where you are the vampire. Hunt, feed, and survive the night.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "keywords": [
+    "game",
+    "roguelike",
+    "phaser",
+    "vampire"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vite": "^6.0.3"
+  },
+  "dependencies": {
+    "phaser": "^3.87.0"
+  }
+}
