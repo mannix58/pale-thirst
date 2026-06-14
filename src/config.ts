@@ -93,6 +93,17 @@ export interface EnemyKind {
   contactCooldownMs: number;
 }
 
+export const STEALTH = {
+  /** A conscious villager within this distance of a feed witnesses it. */
+  witnessRange: 155,
+  /** Chase speed of an enraged villager, px/s. */
+  enragedSpeed: 132,
+  /** Contact damage from an enraged villager. */
+  enragedDamage: 8,
+  /** Min ms between an enraged villager's contact hits. */
+  enragedCooldownMs: 800,
+} as const;
+
 export const ENEMIES: Record<"villager" | "guard", EnemyKind> = {
   villager: {
     frame: 7,
@@ -125,6 +136,26 @@ export const DAWN = {
   coffinRange: 44,
   /** Peak alpha of the brightening sky overlay as dawn breaks. */
   skyMaxAlpha: 0.22,
+  /**
+   * Blood fraction at/above which the vampire is "sated" and may retire to the
+   * coffin early — so a night cleared of prey can still be ended deliberately.
+   */
+  satedFraction: 0.95,
+} as const;
+
+export const ATMO = {
+  /** Base darkness alpha outside the vampire's light. */
+  darkness: 0.82,
+  /** Radius (px) of full visibility around the vampire. */
+  lightInner: 92,
+  /** Radius (px) where the light has fully faded to darkness. */
+  lightOuter: 290,
+  /** Blood fraction below which the danger vignette appears. */
+  lowBloodThreshold: 0.35,
+  /** Peak alpha of the low-blood red vignette. */
+  lowBloodMaxAlpha: 0.6,
+  /** Max number of blood pools kept on the floor at once. */
+  maxBloodPools: 60,
 } as const;
 
 export const DASH = {

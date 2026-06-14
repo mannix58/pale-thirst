@@ -1,5 +1,7 @@
 import Phaser from "phaser";
-import { ASSETS, COLORS, VIEW, type EnemyKind } from "../config.ts";
+import { ASSETS, COLORS, STEALTH, VIEW, type EnemyKind } from "../config.ts";
+
+const ENRAGED_TINT = 0xff4d4d;
 
 const enum State {
   Wander,
@@ -18,6 +20,8 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   private staggerUntil = 0;
   private nextWanderAt = 0;
   private lastContactAt = 0;
+  /** A villager that witnessed a feed and turned hostile. */
+  private enraged = false;
 
   constructor(scene: Phaser.Scene, x: number, y: number, kind: EnemyKind) {
     super(scene, x, y, ASSETS.tilesheet, kind.frame);
@@ -36,12 +40,44 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     return this.aiState === State.Staggered && this.active;
   }
 
-  /** True if a contact hit is allowed right now (hunters damaging the player). */
+  /** Hunts the player either by nature (guards) or by rage (witness villagers). */
+  get isHunterNow(): boolean {
+    return this.kind.isHunter || this.enraged;
+  }
+
+  get contactDamage(): number {
+    return this.enraged ? STEALTH.enragedDamage : this.kind.contactDamage;
+  }
+
+  private get contactCooldownMs(): number {
+    return this.enraged ? STEALTH.enragedCooldownMs : this.kind.contactCooldownMs;
+  }
+
+  /** A conscious, peaceable villager who could witness a nearby feed. */
+  canWitness(): boolean {
+    return !this.kind.isHunter && !this.enraged && this.active && !this.isBiteable;
+  }
+
+  /** Turn hostile after seeing the vampire feed: now chases and bites. */
+  enrage(): void {
+    if (this.enraged) return;
+    this.enraged = true;
+    this.aiState = State.Alert;
+    this.setTint(ENRAGED_TINT);
+    this.scene.tweens.add({
+      targets: this,
+      scale: { from: VIEW.spriteScale * 1.35, to: VIEW.spriteScale },
+      duration: 220,
+      ease: "Back.out",
+    });
+  }
+
+  /** True if a contact hit is allowed right now (hunters/enraged damaging the player). */
   canContact(now: number): boolean {
     return (
-      this.kind.isHunter &&
+      this.isHunterNow &&
       this.aiState !== State.Staggered &&
-      now - this.lastContactAt >= this.kind.contactCooldownMs
+      now - this.lastContactAt >= this.contactCooldownMs
     );
   }
 
@@ -72,14 +108,19 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   private flashHit(): void {
     this.setTintFill(0xffffff);
     this.scene.time.delayedCall(80, () => {
-      if (this.active && this.aiState !== State.Staggered) this.clearTint();
+      if (this.active && this.aiState !== State.Staggered) this.restoreTint();
     });
+  }
+
+  private restoreTint(): void {
+    if (this.enraged) this.setTint(ENRAGED_TINT);
+    else this.clearTint();
   }
 
   private recover(): void {
     this.aiState = State.Wander;
     this.health = this.kind.maxHealth;
-    this.clearTint();
+    this.restoreTint();
     this.setAngle(0);
   }
 
@@ -97,11 +138,14 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     const toPlayer = player.clone().subtract(here);
     const dist = toPlayer.length();
 
-    if (dist <= this.kind.detectRange) {
+    // Enraged villagers hunt relentlessly; others react within their senses.
+    const range = this.enraged ? Number.POSITIVE_INFINITY : this.kind.detectRange;
+    if (dist <= range) {
       this.aiState = State.Alert;
+      const speed = this.enraged ? STEALTH.enragedSpeed : this.kind.alertSpeed;
       const dir = toPlayer.normalize();
-      if (!this.kind.isHunter) dir.negate(); // prey flee
-      this.setVelocity(dir.x * this.kind.alertSpeed, dir.y * this.kind.alertSpeed);
+      if (!this.isHunterNow) dir.negate(); // peaceable prey flee
+      this.setVelocity(dir.x * speed, dir.y * speed);
       this.setFlipX(dir.x < 0);
       return;
     }

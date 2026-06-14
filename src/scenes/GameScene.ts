@@ -1,6 +1,7 @@
 import Phaser from "phaser";
 import {
   ASSETS,
+  ATMO,
   COLORS,
   DAWN,
   ENEMIES,
@@ -8,6 +9,7 @@ import {
   PLAYER,
   SPRITES,
   START_BLOOD_FRACTION,
+  STEALTH,
   VIEW,
 } from "../config.ts";
 import { loadRun, type RunState } from "../systems/RunState.ts";
@@ -22,6 +24,8 @@ import {
 import { BloodSystem } from "../systems/BloodSystem.ts";
 import { DawnSystem } from "../systems/DawnSystem.ts";
 import { Hud } from "../ui/Hud.ts";
+import { Atmosphere } from "../ui/Atmosphere.ts";
+import { audio } from "../systems/AudioEngine.ts";
 
 /**
  * GameScene is the night itself: map, entities, the update loop, win/lose.
@@ -36,6 +40,8 @@ export class GameScene extends Phaser.Scene {
   private blood!: BloodSystem;
   private dawn!: DawnSystem;
   private hud!: Hud;
+  private atmosphere!: Atmosphere;
+  private bloodPools: Phaser.GameObjects.Ellipse[] = [];
   private run!: RunState;
   private night = 1;
   private ended = false;
@@ -58,6 +64,7 @@ export class GameScene extends Phaser.Scene {
 
   create(): void {
     this.ended = false;
+    this.bloodPools = [];
     this.run = loadRun(this.registry);
     this.night = this.run.night;
 
@@ -91,6 +98,8 @@ export class GameScene extends Phaser.Scene {
     this.setupDawn();
     this.spawnEnemies();
     this.setupInput();
+    this.atmosphere = new Atmosphere(this);
+    audio.startAmbient();
 
     if (this.night === 1) this.showControlsHint();
   }
@@ -101,7 +110,7 @@ export class GameScene extends Phaser.Scene {
       .text(
         VIEW.width / 2,
         VIEW.height - 48,
-        "WASD / Arrows move   ·   Click or SPACE to claw   ·   E or Right-click to bite\nKeep your blood up — reach your coffin before dawn",
+        "WASD move   ·   Click / SPACE claw   ·   E / Right-click bite   ·   M mute\nKeep your blood up — reach your coffin before dawn",
         {
           fontFamily: "Georgia, serif",
           fontSize: "17px",
@@ -144,8 +153,9 @@ export class GameScene extends Phaser.Scene {
       const now = this.time.now;
       if (enemy.canContact(now)) {
         enemy.markContact(now);
-        this.blood.damage(enemy.kind.contactDamage);
+        this.blood.damage(enemy.contactDamage);
         this.cameras.main.shake(120, 0.006);
+        audio.hurt();
       }
     });
   }
@@ -154,6 +164,7 @@ export class GameScene extends Phaser.Scene {
     const kb = this.input.keyboard!;
     this.clawKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE);
     this.biteKey = kb.addKey(Phaser.Input.Keyboard.KeyCodes.E);
+    kb.on("keydown-M", () => audio.toggleMute());
     this.input.mouse?.disableContextMenu();
     this.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
       if (this.ended) return;
@@ -182,6 +193,14 @@ export class GameScene extends Phaser.Scene {
     for (const obj of this.enemies.getChildren()) {
       (obj as Enemy).think(this.time.now, playerPos);
     }
+
+    this.atmosphere.update(
+      this,
+      this.player.x,
+      this.player.y,
+      this.blood.fraction,
+      this.dawn.imminentRamp
+    );
   }
 
   /** Swipe in the facing direction: stagger any prey caught in the arc. */
@@ -192,7 +211,9 @@ export class GameScene extends Phaser.Scene {
     const origin = new Phaser.Math.Vector2(this.player.x, this.player.y);
     const facing = this.player.facing;
     this.showClawSwipe(origin, facing);
+    audio.claw();
 
+    let connected = false;
     for (const obj of this.enemies.getChildren()) {
       const enemy = obj as Enemy;
       if (!enemy.active) continue;
@@ -202,7 +223,9 @@ export class GameScene extends Phaser.Scene {
       // Within a forward-facing half-arc.
       if (dist > 1 && facing.dot(to.clone().normalize()) < 0.2) continue;
       enemy.takeClaw(PLAYER.clawDamage, this.time.now);
+      connected = true;
     }
+    if (connected) audio.hitEnemy();
   }
 
   /** Bite the nearest staggered enemy: drain blood, kill it, lock briefly. */
@@ -228,10 +251,65 @@ export class GameScene extends Phaser.Scene {
     if (!target) return;
 
     this.player.lockFor(this.run.biteLockMs);
+    this.spillBlood(target.x, target.y);
     this.bloodBurst(target.x, target.y);
     this.blood.feed(this.run.biteRefill);
+    const fx = target.x;
+    const fy = target.y;
     target.destroy();
     this.cameras.main.flash(120, 80, 0, 0);
+    audio.bite();
+    this.witnessFeed(fx, fy);
+  }
+
+  /** Conscious villagers who are near a feed AND can see it turn hostile. */
+  private witnessFeed(x: number, y: number): void {
+    let anyWitness = false;
+    for (const obj of this.enemies.getChildren()) {
+      const enemy = obj as Enemy;
+      if (!enemy.canWitness()) continue;
+      const inRange =
+        Phaser.Math.Distance.Between(x, y, enemy.x, enemy.y) <= STEALTH.witnessRange;
+      if (inRange && this.hasLineOfSight(x, y, enemy.x, enemy.y)) {
+        enemy.enrage();
+        this.showAlert(enemy.x, enemy.y);
+        anyWitness = true;
+      }
+    }
+    if (anyWitness) audio.alarm();
+  }
+
+  /** True if no wall tile blocks the straight line between two world points. */
+  private hasLineOfSight(x1: number, y1: number, x2: number, y2: number): boolean {
+    const dist = Phaser.Math.Distance.Between(x1, y1, x2, y2);
+    const steps = Math.max(1, Math.ceil(dist / (VIEW.tile * 0.5)));
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      const col = Math.floor((x1 + (x2 - x1) * t) / VIEW.tile);
+      const row = Math.floor((y1 + (y2 - y1) * t) / VIEW.tile);
+      if (this.map.tiles[row]?.[col] === Tile.Wall) return false;
+    }
+    return true;
+  }
+
+  /** A red "!" that rises off a villager who just witnessed a feed. */
+  private showAlert(x: number, y: number): void {
+    const mark = this.add
+      .text(x, y - VIEW.tile, "!", {
+        fontFamily: "Georgia, serif",
+        fontSize: "26px",
+        color: "#ff4d4d",
+        fontStyle: "bold",
+      })
+      .setOrigin(0.5)
+      .setDepth(70);
+    this.tweens.add({
+      targets: mark,
+      y: y - VIEW.tile * 2,
+      alpha: 0,
+      duration: 700,
+      onComplete: () => mark.destroy(),
+    });
   }
 
   private showClawSwipe(origin: Phaser.Math.Vector2, facing: Phaser.Math.Vector2): void {
@@ -248,6 +326,25 @@ export class GameScene extends Phaser.Scene {
       duration: 160,
       onComplete: () => arc.destroy(),
     });
+  }
+
+  /** A dark stain left where prey are drained — carnage that lingers. */
+  private spillBlood(x: number, y: number): void {
+    const pool = this.add
+      .ellipse(
+        x + Phaser.Math.Between(-4, 4),
+        y + Phaser.Math.Between(0, 6),
+        Phaser.Math.Between(20, 34),
+        Phaser.Math.Between(12, 20),
+        COLORS.bloodDark,
+        0.55
+      )
+      .setDepth(-3)
+      .setRotation(Phaser.Math.FloatBetween(0, Math.PI));
+    this.bloodPools.push(pool);
+    if (this.bloodPools.length > ATMO.maxBloodPools) {
+      this.bloodPools.shift()?.destroy();
+    }
   }
 
   private bloodBurst(x: number, y: number): void {
@@ -271,6 +368,7 @@ export class GameScene extends Phaser.Scene {
     if (this.ended) return;
     this.ended = true;
     this.player.setVelocity(0, 0);
+    audio.death();
     this.scene.start("GameOver", { night: this.night, cause });
   }
 
@@ -323,9 +421,10 @@ export class GameScene extends Phaser.Scene {
     const y = this.map.coffinSpawn.y!;
 
     // A gentle pulsing glow so the coffin is a visible beacon across the map.
+    // Depth above the darkness layer (800) so it reads as a beacon across the map.
     this.coffinGlow = this.add
       .ellipse(x, y, VIEW.tile * 3, VIEW.tile * 3, COLORS.dawn, 0.18)
-      .setDepth(-2)
+      .setDepth(805)
       .setBlendMode(Phaser.BlendModes.SCREEN);
     this.tweens.add({
       targets: this.coffinGlow,
@@ -406,8 +505,11 @@ export class GameScene extends Phaser.Scene {
       this.coffin.y
     );
     const imminent = this.dawn.isImminent;
+    const sated = this.blood.fraction >= DAWN.satedFraction;
+    // You may retire to the coffin once dawn is near OR once fully sated.
+    const canRest = imminent || sated;
 
-    if (imminent && dist <= DAWN.coffinRange) {
+    if (canRest && dist <= DAWN.coffinRange) {
       this.surviveNight();
       return;
     }
@@ -416,21 +518,21 @@ export class GameScene extends Phaser.Scene {
     if (dist <= DAWN.coffinRange * 2) {
       this.coffinPrompt
         .setText(
-          imminent
+          canRest
             ? "Slip inside — rest until nightfall"
-            : "Your coffin — return here when dawn nears"
+            : "Your coffin — rest here once sated, or when dawn nears"
         )
         .setVisible(true);
     } else {
       this.coffinPrompt.setVisible(false);
     }
 
-    // Screen-edge arrow pointing to an off-screen coffin once dawn is imminent.
+    // Screen-edge arrow pointing to an off-screen coffin once resting is allowed.
     const onScreen = this.cameras.main.worldView.contains(
       this.coffin.x,
       this.coffin.y
     );
-    if (imminent && !onScreen) {
+    if (canRest && !onScreen) {
       const ang = Phaser.Math.Angle.Between(
         this.player.x,
         this.player.y,
@@ -465,6 +567,7 @@ export class GameScene extends Phaser.Scene {
     if (this.ended) return;
     this.ended = true;
     this.player.setVelocity(0, 0);
+    audio.survive();
     // UpgradeScene draws the draft, applies it, and advances run.night.
     this.scene.start("Upgrade", { night: this.night });
   }

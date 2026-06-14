@@ -29,6 +29,7 @@ TypeScript.
 | Claw (wound / stagger) | Left-click or `Space` |
 | Bite (feed on staggered prey) | Right-click or `E` |
 | Bat Dash (after the upgrade) | `Shift` |
+| Mute / unmute | `M` |
 | Rise again (on death) | `R` |
 
 ## Run it

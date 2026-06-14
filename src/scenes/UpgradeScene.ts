@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { COLORS, VIEW } from "../config.ts";
 import { loadRun, saveRun } from "../systems/RunState.ts";
 import { drawUpgrades, type Upgrade } from "../systems/UpgradePool.ts";
+import { audio } from "../systems/AudioEngine.ts";
 
 export interface UpgradeData {
   /** The night the player just survived. */
@@ -112,6 +113,7 @@ export class UpgradeScene extends Phaser.Scene {
   }
 
   private choose(upgrade: Upgrade): void {
+    audio.upgrade();
     const run = loadRun(this.registry);
     upgrade.apply(run);
     if (!run.taken.includes(upgrade.id)) run.taken.push(upgrade.id);
