@@ -53,8 +53,10 @@ export const BLOOD = {
   max: 100,
   /** Blood the player begins each run with. */
   start: 70,
-  /** Constant thirst drain, in blood per second. */
+  /** Constant thirst drain on night 1, in blood per second. */
   drainPerSecond: 2.5,
+  /** Added to the drain rate each night — escalating thirst pressure. */
+  drainPerNight: 0.2,
   /** Blood restored by a successful bite/feed. */
   biteRefill: 28,
 } as const;
@@ -96,6 +98,11 @@ export interface EnemyKind {
 export const STEALTH = {
   /** A conscious villager within this distance of a feed witnesses it. */
   witnessRange: 155,
+  /**
+   * How long a hunter keeps pursuing the player's last-known spot after losing
+   * sight before giving up. Break line of sight this long to escape.
+   */
+  loseSightMs: 2600,
   /** Chase speed of an enraged villager, px/s. */
   enragedSpeed: 132,
   /** Contact damage from an enraged villager. */
@@ -133,14 +140,14 @@ export const DAWN = {
   /** Progress (0..1) at which the "dawn approaches" warning begins. */
   imminentThreshold: 0.82,
   /** How close (px) the player must be to the coffin to survive sunrise. */
-  coffinRange: 44,
+  coffinRange: 52,
   /** Peak alpha of the brightening sky overlay as dawn breaks. */
   skyMaxAlpha: 0.22,
   /**
    * Blood fraction at/above which the vampire is "sated" and may retire to the
-   * coffin early — so a night cleared of prey can still be ended deliberately.
+   * coffin early. Kept reachable despite the constant drain.
    */
-  satedFraction: 0.95,
+  satedFraction: 0.85,
 } as const;
 
 export const ATMO = {

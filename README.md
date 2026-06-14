@@ -15,6 +15,10 @@ TypeScript.
   then **bite** a staggered victim to drain a deep draught of blood. The bite
   locks you in place for a moment — feeding leaves you exposed.
 - **Beware guards.** They hunt *you* and draw blood on contact.
+- **Stay unseen.** Enemies only chase what they can see — slip behind a wall or
+  into the dark and they'll pursue your last-known spot, then lose you. Feeding
+  in front of a conscious villager (who can see it) enrages them into attackers,
+  so drain your prey where no one is watching.
 - **Survive until dawn.** A dawn meter fills across the night. When the sun
   breaks you must be at your **coffin** (far corner of the map) — caught in the
   open, sunlight destroys you.

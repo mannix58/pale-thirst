@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import {
   ASSETS,
   ATMO,
+  BLOOD,
   COLORS,
   DAWN,
   ENEMIES,
@@ -14,7 +15,7 @@ import {
 } from "../config.ts";
 import { loadRun, type RunState } from "../systems/RunState.ts";
 import { Player } from "../entities/Player.ts";
-import { Enemy } from "../entities/Enemy.ts";
+import { Enemy, type SightTest } from "../entities/Enemy.ts";
 import {
   generateMap,
   randomFloorAway,
@@ -91,6 +92,7 @@ export class GameScene extends Phaser.Scene {
     this.blood = new BloodSystem({
       max: this.run.maxBlood,
       start: Math.round(this.run.maxBlood * START_BLOOD_FRACTION),
+      drainPerSecond: BLOOD.drainPerSecond + (this.night - 1) * BLOOD.drainPerNight,
     });
     this.blood.setOnDeath(() => this.die("desiccation"));
     this.hud = new Hud(this, this.night);
@@ -190,8 +192,9 @@ export class GameScene extends Phaser.Scene {
     if (Phaser.Input.Keyboard.JustDown(this.biteKey)) this.doBite();
 
     const playerPos = new Phaser.Math.Vector2(this.player.x, this.player.y);
+    const sight: SightTest = (fx, fy, tx, ty) => this.hasLineOfSight(fx, fy, tx, ty);
     for (const obj of this.enemies.getChildren()) {
-      (obj as Enemy).think(this.time.now, playerPos);
+      (obj as Enemy).think(this.time.now, playerPos, sight);
     }
 
     this.atmosphere.update(
@@ -506,8 +509,10 @@ export class GameScene extends Phaser.Scene {
     );
     const imminent = this.dawn.isImminent;
     const sated = this.blood.fraction >= DAWN.satedFraction;
-    // You may retire to the coffin once dawn is near OR once fully sated.
-    const canRest = imminent || sated;
+    const cleared = this.enemies.countActive(true) === 0;
+    // Retire to the coffin once dawn is near, once sated, or once the map is
+    // cleared of prey (nothing left to hunt).
+    const canRest = imminent || sated || cleared;
 
     if (canRest && dist <= DAWN.coffinRange) {
       this.surviveNight();

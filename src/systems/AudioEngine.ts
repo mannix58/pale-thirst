@@ -180,15 +180,30 @@ class AudioEngine {
 
   // --- Ambient ---------------------------------------------------------------
 
-  /** Low roots of a slow, melancholic minor progression (i–VI–III–VII in Am). */
-  private static readonly CHORD_ROOTS = [55, 43.65, 65.41, 49];
-  /** A-natural-minor notes (one octave) for the sparse melody bells. */
-  private static readonly MELODY = [220, 246.94, 261.63, 293.66, 329.63, 349.23, 392, 440];
+  /** Two slow drone roots (Am / F) — gentle movement, not constant "switching". */
+  private static readonly CHORD_ROOTS = [55, 43.65];
+  /**
+   * A recurring creepy phrase as [frequencyHz, beats]; 0 Hz = a rest. Built from
+   * unsettling intervals: a tritone (E♭ over A) and a minor-second wobble
+   * (B♭–A) sinking chromatically — a music-box lullaby gone wrong.
+   */
+  private static readonly MOTIF: ReadonlyArray<readonly [number, number]> = [
+    [440.0, 0.55], // A4
+    [523.25, 0.55], // C5
+    [659.25, 0.55], // E5
+    [622.25, 0.85], // E♭5 — tritone from A, deeply uneasy
+    [0, 0.5],
+    [440.0, 0.5], // A4
+    [466.16, 0.5], // B♭4 — minor second
+    [415.3, 1.1], // A♭4 — chromatic sink
+    [0, 1.9], // breath before the phrase returns
+  ];
+  /** Seconds of silence between repetitions of the motif. */
+  private static readonly MOTIF_GAP = 4;
 
   /**
-   * Start the ambient bed: a consonant root+fifth+octave drone that drifts
-   * through a minor chord progression, with occasional soft bell notes so it
-   * breathes and feels mournful rather than monotone. Idempotent.
+   * Start the ambient bed: a low, mostly-steady root+fifth+octave drone with a
+   * slow filter breath, over which a fixed eerie motif recurs. Idempotent.
    */
   startAmbient(): void {
     if (this.ambient) return;
@@ -197,19 +212,19 @@ class AudioEngine {
 
     const gain = ctx.createGain();
     gain.gain.setValueAtTime(0.0001, t);
-    gain.gain.exponentialRampToValueAtTime(0.05, t + 3);
+    gain.gain.exponentialRampToValueAtTime(0.045, t + 3);
 
     const filt = ctx.createBiquadFilter();
     filt.type = "lowpass";
-    filt.frequency.value = 420;
-    filt.Q.value = 0.8; // gentler than before — less horror-drone
+    filt.frequency.value = 380;
+    filt.Q.value = 1;
     filt.connect(gain).connect(this.master!);
 
     // Very slow filter sweep for a breathing quality.
     const lfo = ctx.createOscillator();
-    lfo.frequency.value = 0.04;
+    lfo.frequency.value = 0.035;
     const lfoGain = ctx.createGain();
-    lfoGain.gain.value = 120;
+    lfoGain.gain.value = 110;
     lfo.connect(lfoGain).connect(filt.frequency);
     lfo.start(t);
 
@@ -218,13 +233,13 @@ class AudioEngine {
     const nodes: AudioScheduledSourceNode[] = [lfo];
     [
       [root, "sine", 0.9],
-      [root * 1.5, "sine", 0.55],
-      [root * 2, "triangle", 0.35],
+      [root * 1.5, "sine", 0.5],
+      [root * 2, "triangle", 0.3],
     ].forEach(([freq, type, vol]) => {
       const osc = ctx.createOscillator();
       osc.type = type as OscillatorType;
       osc.frequency.value = freq as number;
-      osc.detune.value = (Math.random() - 0.5) * 6;
+      osc.detune.value = (Math.random() - 0.5) * 11; // more beating = more unease
       const og = ctx.createGain();
       og.gain.value = vol as number;
       osc.connect(og).connect(filt);
@@ -233,55 +248,68 @@ class AudioEngine {
       nodes.push(osc);
     });
 
-    // Drift through the chord progression and sprinkle melody notes.
-    const chordTimer = window.setInterval(() => this.nextChord(), 13000);
-    const scheduleBell = () => {
-      if (!this.ambient) return;
-      if (Math.random() < 0.7) {
-        const chordRoot = AudioEngine.CHORD_ROOTS[this.ambient.chordIndex];
-        const note = AudioEngine.MELODY[Math.floor(Math.random() * AudioEngine.MELODY.length)];
-        // Drop the melody an octave over the lowest roots so it stays mournful.
-        this.bell(note * (chordRoot < 50 ? 0.75 : 1));
-      }
-      const id = window.setTimeout(scheduleBell, 4000 + Math.random() * 6000);
-      this.ambient?.timers.push(id);
-    };
-
+    // Rare, slow root shifts so the bed isn't perfectly static.
+    const chordTimer = window.setInterval(() => this.nextChord(), 22000);
     this.ambient = { gain, nodes, drone, timers: [chordTimer], chordIndex: 0 };
-    const firstBell = window.setTimeout(scheduleBell, 3500);
-    this.ambient.timers.push(firstBell);
+    this.scheduleMotif();
   }
 
-  /** Glide the drone to the next chord root in the progression. */
+  /** Play the motif once, then schedule its next repetition. */
+  private scheduleMotif(): void {
+    if (!this.ambient) return;
+    const ctx = this.ensure();
+    const start = ctx.currentTime + 0.15;
+    let t = 0;
+    for (const [freq, beats] of AudioEngine.MOTIF) {
+      if (freq > 0) this.playNote(freq, beats * 0.95, start + t);
+      t += beats;
+    }
+    const id = window.setTimeout(
+      () => this.scheduleMotif(),
+      (t + AudioEngine.MOTIF_GAP) * 1000
+    );
+    this.ambient.timers.push(id);
+  }
+
+  /** Glide the drone to the next chord root. */
   private nextChord(): void {
     if (!this.ambient || !this.ctx) return;
     this.ambient.chordIndex =
       (this.ambient.chordIndex + 1) % AudioEngine.CHORD_ROOTS.length;
     const root = AudioEngine.CHORD_ROOTS[this.ambient.chordIndex];
     const t = this.ctx.currentTime;
-    const targets = [root, root * 1.5, root * 2];
-    this.ambient.drone.forEach((osc, i) => {
-      osc.frequency.setTargetAtTime(targets[i], t, 1.5);
+    [root, root * 1.5, root * 2].forEach((target, i) => {
+      this.ambient!.drone[i].frequency.setTargetAtTime(target, t, 2);
     });
   }
 
-  /** A soft, slowly-decaying bell — the melodic colour over the drone. */
-  private bell(freq: number): void {
+  /** A single motif note: detuned triangle with vibrato and a slow decay. */
+  private playNote(freq: number, dur: number, when: number): void {
     if (this.muted) return;
     const ctx = this.ensure();
-    const t = ctx.currentTime;
     const osc = ctx.createOscillator();
-    osc.type = "sine";
+    osc.type = "triangle";
     osc.frequency.value = freq;
+
+    const vib = ctx.createOscillator();
+    vib.frequency.value = 5.5;
+    const vibAmt = ctx.createGain();
+    vibAmt.gain.value = freq * 0.013; // ~1.3% pitch wobble
+    vib.connect(vibAmt).connect(osc.frequency);
+
     const g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.05, t + 0.08);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 1.8);
+    g.gain.setValueAtTime(0.0001, when);
+    g.gain.exponentialRampToValueAtTime(0.06, when + 0.05);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + dur);
+
     const pan = ctx.createStereoPanner();
-    pan.pan.value = (Math.random() - 0.5) * 1.2;
+    pan.pan.value = (Math.random() - 0.5) * 0.6;
+
     osc.connect(g).connect(pan).connect(this.master!);
-    osc.start(t);
-    osc.stop(t + 1.9);
+    osc.start(when);
+    osc.stop(when + dur + 0.05);
+    vib.start(when);
+    vib.stop(when + dur + 0.05);
   }
 
   stopAmbient(): void {

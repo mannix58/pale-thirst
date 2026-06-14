@@ -3,6 +3,9 @@ import { ASSETS, COLORS, STEALTH, VIEW, type EnemyKind } from "../config.ts";
 
 const ENRAGED_TINT = 0xff4d4d;
 
+/** Tests whether the straight line from (fx,fy) to (tx,ty) is unobstructed. */
+export type SightTest = (fx: number, fy: number, tx: number, ty: number) => boolean;
+
 const enum State {
   Wander,
   Alert, // fleeing (prey) or chasing (hunter)
@@ -22,6 +25,10 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   private lastContactAt = 0;
   /** A villager that witnessed a feed and turned hostile. */
   private enraged = false;
+  /** Last spot a hunter saw the player, and when it lost sight. */
+  private lastSeenX = 0;
+  private lastSeenY = 0;
+  private lostSightAt = 0;
 
   constructor(scene: Phaser.Scene, x: number, y: number, kind: EnemyKind) {
     super(scene, x, y, ASSETS.tilesheet, kind.frame);
@@ -124,8 +131,12 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.setAngle(0);
   }
 
-  /** Driven by the scene each frame with the player's position. */
-  think(now: number, player: Phaser.Math.Vector2): void {
+  /**
+   * Driven by the scene each frame. `sight` reports whether this enemy has an
+   * unobstructed line to the player; perception is gated on it so the player can
+   * hide behind walls and in the dark.
+   */
+  think(now: number, player: Phaser.Math.Vector2, sight: SightTest): void {
     if (!this.active) return;
 
     if (this.aiState === State.Staggered) {
@@ -134,33 +145,74 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
       return;
     }
 
-    const here = new Phaser.Math.Vector2(this.x, this.y);
-    const toPlayer = player.clone().subtract(here);
-    const dist = toPlayer.length();
-
-    // Enraged villagers hunt relentlessly; others react within their senses.
+    const dist = Phaser.Math.Distance.Between(this.x, this.y, player.x, player.y);
     const range = this.enraged ? Number.POSITIVE_INFINITY : this.kind.detectRange;
-    if (dist <= range) {
+    const canSee = dist <= range && sight(this.x, this.y, player.x, player.y);
+
+    if (this.isHunterNow) {
+      this.hunt(now, player, canSee);
+    } else if (canSee) {
       this.aiState = State.Alert;
-      const speed = this.enraged ? STEALTH.enragedSpeed : this.kind.alertSpeed;
-      const dir = toPlayer.normalize();
-      if (!this.isHunterNow) dir.negate(); // peaceable prey flee
-      this.setVelocity(dir.x * speed, dir.y * speed);
-      this.setFlipX(dir.x < 0);
+      this.fleeFrom(player);
+    } else {
+      this.aiState = State.Wander;
+      this.wander(now);
+    }
+  }
+
+  /** Hunter behaviour: chase on sight, pursue last-known spot, then give up. */
+  private hunt(now: number, player: Phaser.Math.Vector2, canSee: boolean): void {
+    const speed = this.enraged ? STEALTH.enragedSpeed : this.kind.alertSpeed;
+
+    if (canSee) {
+      this.aiState = State.Alert;
+      this.lastSeenX = player.x;
+      this.lastSeenY = player.y;
+      this.lostSightAt = 0;
+      this.moveToward(player.x, player.y, speed);
       return;
     }
 
-    // Out of range: idle wandering.
-    this.aiState = State.Wander;
-    if (now >= this.nextWanderAt) {
-      this.nextWanderAt = now + Phaser.Math.Between(700, 1800);
-      if (Phaser.Math.Between(0, 2) === 0) {
-        this.setVelocity(0, 0);
+    if (this.aiState === State.Alert) {
+      if (this.lostSightAt === 0) this.lostSightAt = now;
+      if (now - this.lostSightAt > STEALTH.loseSightMs) {
+        // Lost the trail — give up and resume wandering.
+        this.aiState = State.Wander;
+        this.lostSightAt = 0;
+        this.nextWanderAt = 0;
       } else {
-        const a = Phaser.Math.FloatBetween(0, Math.PI * 2);
-        this.setVelocity(Math.cos(a) * this.kind.speed, Math.sin(a) * this.kind.speed);
-        this.setFlipX(Math.cos(a) < 0);
+        const reached =
+          Phaser.Math.Distance.Between(this.x, this.y, this.lastSeenX, this.lastSeenY) < 8;
+        if (reached) this.setVelocity(0, 0);
+        else this.moveToward(this.lastSeenX, this.lastSeenY, speed);
+        return;
       }
+    }
+
+    this.wander(now);
+  }
+
+  private moveToward(tx: number, ty: number, speed: number): void {
+    const a = Math.atan2(ty - this.y, tx - this.x);
+    this.setVelocity(Math.cos(a) * speed, Math.sin(a) * speed);
+    this.setFlipX(Math.cos(a) < 0);
+  }
+
+  private fleeFrom(player: Phaser.Math.Vector2): void {
+    const a = Math.atan2(this.y - player.y, this.x - player.x);
+    this.setVelocity(Math.cos(a) * this.kind.alertSpeed, Math.sin(a) * this.kind.alertSpeed);
+    this.setFlipX(Math.cos(a) < 0);
+  }
+
+  private wander(now: number): void {
+    if (now < this.nextWanderAt) return;
+    this.nextWanderAt = now + Phaser.Math.Between(700, 1800);
+    if (Phaser.Math.Between(0, 2) === 0) {
+      this.setVelocity(0, 0);
+    } else {
+      const a = Phaser.Math.FloatBetween(0, Math.PI * 2);
+      this.setVelocity(Math.cos(a) * this.kind.speed, Math.sin(a) * this.kind.speed);
+      this.setFlipX(Math.cos(a) < 0);
     }
   }
 }
