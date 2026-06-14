@@ -2,6 +2,8 @@ import Phaser from "phaser";
 import { COLORS, VIEW } from "./config.ts";
 import { BootScene } from "./scenes/BootScene.ts";
 import { GameScene } from "./scenes/GameScene.ts";
+import { UpgradeScene } from "./scenes/UpgradeScene.ts";
+import { GameOverScene } from "./scenes/GameOverScene.ts";
 
 const config: Phaser.Types.Core.GameConfig = {
   type: Phaser.AUTO,
@@ -21,7 +23,12 @@ const config: Phaser.Types.Core.GameConfig = {
       debug: false,
     },
   },
-  scene: [BootScene, GameScene],
+  scene: [BootScene, GameScene, UpgradeScene, GameOverScene],
 };
 
-new Phaser.Game(config);
+const game = new Phaser.Game(config);
+
+// Dev-only handle for automated visual checks; stripped from production builds.
+if (import.meta.env.DEV) {
+  (window as unknown as { __game: Phaser.Game }).__game = game;
+}

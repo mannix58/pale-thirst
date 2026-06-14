@@ -1,8 +1,8 @@
 import Phaser from "phaser";
+import { ASSETS } from "../config.ts";
 
 /**
  * BootScene loads all assets, then hands off to the game.
- * For the scaffold step it loads nothing and immediately starts GameScene.
  */
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -10,7 +10,10 @@ export class BootScene extends Phaser.Scene {
   }
 
   preload(): void {
-    // Asset loading (Kenney tileset, sprites) is added in a later step.
+    this.load.spritesheet(ASSETS.tilesheet, ASSETS.tilesheetPath, {
+      frameWidth: ASSETS.frame,
+      frameHeight: ASSETS.frame,
+    });
   }
 
   create(): void {
